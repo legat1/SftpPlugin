@@ -1,5 +1,8 @@
 from fman import show_status_message
 from fman.url import splitscheme
+
+from os.path import expanduser
+
 #
 # In order to load the Paramiko library, we need to put the
 # plugin's path into the os' sys path.
@@ -14,7 +17,7 @@ except ImportError:
 
 
 class SftpConfig():
-    _config = paramiko.config.SSHConfig.from_path('/Users/blegat/.ssh/config')
+    _config = paramiko.config.SSHConfig.from_path(expanduser('~/.ssh/config'))
 
     @staticmethod
     def get_host(host_name):
@@ -56,6 +59,10 @@ class SftpWrapper():
         if self._host not in SftpWrapper._connections:
             raise Exception('Not connected')
         return SftpWrapper._connections[self._host]
+
+    @property
+    def host(self):
+        return self._host
 
     @property
     def path(self):

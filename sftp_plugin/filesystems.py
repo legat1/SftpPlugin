@@ -1,11 +1,11 @@
-from fman import Task, fs, show_status_message, show_alert
+from fman import Task, submit_task, fs
 from fman.fs import FileSystem, cached
 from fman.url import basename as url_basename, join as url_join, splitscheme
 
 from datetime import datetime
 import errno
 from io import UnsupportedOperation
-from os.path import basename as path_basename, commonprefix, dirname as path_dirname, join as path_join
+from os.path import basename as path_basename, dirname as path_dirname, join as path_join
 import re
 import stat
 from tempfile import NamedTemporaryFile
@@ -108,15 +108,15 @@ class SftpFileSystem(FileSystem):
 
         if is_sftp(src_url) and is_file(dst_url):
             if self.is_dir(src_path):
-                yield Task('Creating ' + url_basename(dst_url), fn=fs.mkdir, args=(dst_url,))
+                fs.mkdir(dst_url)
                 files_to_copy = self.iterdir(src_path)
         elif is_file(src_url) and is_sftp(dst_url):
             if fs.is_dir(src_url):
-                yield Task('Creating ' + url_basename(dst_url), fn=self.mkdir, args=(dst_path,))
+                self.mkdir(dst_path)
                 files_to_copy = fs.iterdir(src_url)
         elif is_sftp(src_url) and is_sftp(dst_url):
             if self.is_dir(src_path):
-                yield Task('Creating ' + url_basename(dst_url), fn=self.mkdir, args=(dst_path,))
+                self.mkdir(dst_path)
                 files_to_copy = self.iterdir(src_path)
 
         if files_to_copy:
@@ -150,21 +150,29 @@ class SftpFileSystem(FileSystem):
         return [Task('Moving ' + url_basename(src_url), fn=self.move, args=(src_url, dst_url))]
 
     def move(self, src_url, dst_url):
-        # Rename on same server
-        src_scheme, src_path = splitscheme(src_url)
-        dst_scheme, dst_path = splitscheme(dst_url)
-        if src_scheme == dst_scheme and commonprefix([src_path, dst_path]):
-            with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
-                src_sftp.conn.rename(src_sftp.path, dst_sftp.path)
-            self.cache.put(dst_path, 'is_dir', self.is_dir(src_path))
-            self.notify_file_added(dst_path)
-            self.cache.clear(src_path)
-            self.notify_file_removed(src_path)
-            return
+        _, src_path = splitscheme(src_url)
+        _, dst_path = splitscheme(dst_url)
 
-        fs.copy(src_url, dst_url)
-        if fs.exists(src_url):
+        # Rename on same server
+        if is_sftp(src_url) and is_sftp(dst_url):
+            with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
+                if src_sftp.host == dst_sftp.host:
+                    src_sftp.conn.rename(src_sftp.path, dst_sftp.path)
+                    self.cache.put(dst_path, 'is_dir', self.is_dir(src_path))
+                    self.notify_file_added(dst_path)
+                    self.cache.clear(src_path)
+                    self.notify_file_removed(src_path)
+                    return
+
+        self.copy(src_url, dst_url)
+
+        if is_sftp(src_url):
+            for task in self.prepare_delete(src_path):
+                submit_task(task)
+        elif is_file(src_url):
             fs.delete(src_url)
+        else:
+            raise UnsupportedOperation
 
     def prepare_delete(self, path):
         return self._prepare_delete(path)

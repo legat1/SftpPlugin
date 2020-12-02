@@ -1,11 +1,12 @@
 import paramiko
 from paramiko.py3compat import input
+from os.path import expanduser
 
 # setup logging
 paramiko.util.log_to_file("demo_sftp.log")
 
 # get hostname
-config = paramiko.config.SSHConfig.from_path("/Users/blegat/.ssh/config")
+config = paramiko.config.SSHConfig.from_path(expanduser("~/.ssh/config"))
 print(config.get_hostnames())
 hostname = input("Hostname: ")
 host = config.lookup(hostname)
