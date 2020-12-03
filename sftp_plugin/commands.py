@@ -4,14 +4,14 @@ from .sftp import SftpWrapper
 
 
 class OpenSftp(DirectoryPaneCommand):
-    aliases = ('Open sftp connection')
+    aliases = ('Open sftp connection',)
 
     def __call__(self):
         self.pane.set_path('sftp://')
 
 
 class CloseSftp(ApplicationCommand):
-    aliases = ('Close sftp connection')
+    aliases = ('Close sftp connection',)
 
     def __call__(self):
         result = show_quicksearch(self._get_items)
