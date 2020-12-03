@@ -24,7 +24,7 @@ class SftpConfig():
         return SftpConfig._config.lookup(host_name)
 
     @staticmethod
-    def get_all_host():
+    def get_all_hosts():
         return SftpConfig._config.get_hostnames()
 
 
@@ -45,13 +45,7 @@ class SftpWrapper():
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):
-        # try:
-        #     SftpWrapper._connections[self._host].close()
-        # except:
-        #     pass
-        # finally:
-        #     if self._host in SftpWrapper._connections:
-        #         del SftpWrapper._connections[self._host]
+        # self._close_connection()
         return
 
     @property
@@ -67,6 +61,21 @@ class SftpWrapper():
     @property
     def path(self):
         return self._path
+
+    @staticmethod
+    def get_all_active_connections():
+        return SftpWrapper._connections.keys()
+
+    @staticmethod
+    def close_connection(host):
+        if host not in SftpWrapper._connections:
+            return
+        try:
+            SftpWrapper._connections[host].close()
+        except:
+            pass
+        finally:
+            del SftpWrapper._connections[host]
 
     def _parse_path(self, path):
         server = path.split('/', 1)
@@ -85,3 +94,6 @@ class SftpWrapper():
             pkey=paramiko.RSAKey.from_private_key(pk)
         )
         return paramiko.SFTPClient.from_transport(t)
+
+    def _close_connection(self):
+        SftpWrapper.close_connection(self._host)

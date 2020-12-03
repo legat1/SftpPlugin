@@ -62,7 +62,7 @@ class SftpFileSystem(FileSystem):
 
     def iterdir(self, path):
         if not path:
-            for hostname in SftpConfig.get_all_host():
+            for hostname in SftpConfig.get_all_hosts():
                 if hostname != '*':
                     yield hostname
         else:
