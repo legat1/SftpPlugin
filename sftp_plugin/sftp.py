@@ -37,11 +37,14 @@ class SftpWrapper():
         self._host, self._path = self._parse_path(path)
 
     def __enter__(self):
-        if not self._host or self._host in SftpWrapper._connections:
+        if not self._host or self._is_connected():
             return self
         show_status_message('Connecting to %s...' % (self._host,))
-        SftpWrapper._connections[self._host] = self._connection()
-        show_status_message('Ready.')
+        try:
+            SftpWrapper._connections[self._host] = self._connection()
+            show_status_message('Ready.')
+        except:
+            show_status_message('Connection error.')
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):
@@ -87,13 +90,18 @@ class SftpWrapper():
 
     def _connection(self):
         host = SftpConfig.get_host(self._host)
-        t = paramiko.Transport((host['hostname'], 22))
-        pk = open(host['identityfile'][0])
-        t.connect(
-            username=host['user'],
-            pkey=paramiko.RSAKey.from_private_key(pk)
-        )
-        return paramiko.SFTPClient.from_transport(t)
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            proxy = paramiko.ProxyCommand(host['proxycommand'])
+        except:
+            proxy = None
+        client.connect(hostname=host['hostname'], username=host['user'], key_filename=host['identityfile'][0], sock=proxy)
+        return client.open_sftp()
 
     def _close_connection(self):
         SftpWrapper.close_connection(self._host)
+
+    def _is_connected(self):
+        return self._host in SftpWrapper._connections and SftpWrapper._connections[self._host].get_channel().get_transport().is_authenticated()
