@@ -73,7 +73,7 @@ class SftpFileSystem(FileSystem):
 
     @cached
     def exists(self, path):
-        if not path or len(path.split('/')) < 2:
+        if not self._is_server_path(path):
             return True
         try:
             self.cache.get(path, 'is_dir')
@@ -83,12 +83,16 @@ class SftpFileSystem(FileSystem):
 
     @cached
     def is_dir(self, path):
-        if not path or len(path.split('/')) < 2:
+        if not self._is_server_path(path):
             return True
         try:
             return self.cache.get(path, 'is_dir')
         except KeyError:
             return False
+
+    @cached
+    def _is_server_path(self, path):
+        return path and len(path.split('/')) > 1
         
     def mkdir(self, path):
         if self.is_dir(path):
