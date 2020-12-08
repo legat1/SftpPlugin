@@ -1,4 +1,4 @@
-from fman import Task, submit_task, fs
+from fman import Task, submit_task, fs, show_status_message
 from fman.fs import FileSystem, cached
 from fman.url import basename as url_basename, join as url_join, splitscheme
 
@@ -73,7 +73,7 @@ class SftpFileSystem(FileSystem):
 
     @cached
     def exists(self, path):
-        if not self._is_server_path(path):
+        if not path or self._is_server_name(path):
             return True
         try:
             self.cache.get(path, 'is_dir')
@@ -83,7 +83,7 @@ class SftpFileSystem(FileSystem):
 
     @cached
     def is_dir(self, path):
-        if not self._is_server_path(path):
+        if not path or self._is_server_name(path):
             return True
         try:
             return self.cache.get(path, 'is_dir')
@@ -92,10 +92,18 @@ class SftpFileSystem(FileSystem):
 
     @cached
     def _is_server_path(self, path):
-        return path and len(path.split('/')) > 1
+        return path and len(path.split('/')) > 1 and self._is_server_name(path.split('/')[0])
+
+    @cached
+    def _is_server_name(self, path):
+        return path in SftpConfig.get_all_hosts()
         
     def mkdir(self, path):
+        if not self._is_server_path(path):
+            show_status_message('Destination path invalid.')
+            return
         if self.is_dir(path):
+            show_status_message('Directory already exists.')
             return
         with SftpWrapper(self.scheme + path) as sftp:
             sftp.conn.mkdir(sftp.path)
@@ -103,6 +111,10 @@ class SftpFileSystem(FileSystem):
         self.notify_file_added(path)
 
     def prepare_copy(self, src_url, dst_url):
+        _, dst_path = splitscheme(dst_url)
+        if is_sftp(dst_url) and not self._is_server_path(dst_path):
+            show_status_message('Destination path invalid.')
+            return []
         return self._prepare_copy(src_url, dst_url)
 
     def _prepare_copy(self, src_url, dst_url):
@@ -151,6 +163,10 @@ class SftpFileSystem(FileSystem):
             raise UnsupportedOperation
 
     def prepare_move(self, src_url, dst_url):
+        _, dst_path = splitscheme(dst_url)
+        if is_sftp(dst_url) and not self._is_server_path(dst_path):
+            show_status_message('Destination path invalid.')
+            return []
         return [Task('Moving ' + url_basename(src_url), fn=self.move, args=(src_url, dst_url))]
 
     def move(self, src_url, dst_url):
@@ -179,6 +195,9 @@ class SftpFileSystem(FileSystem):
             raise UnsupportedOperation
 
     def prepare_delete(self, path):
+        if self._is_server_name(path):
+            show_status_message('Server deletion not implemented.')
+            return []
         return self._prepare_delete(path)
 
     def _prepare_delete(self, path):
@@ -197,6 +216,8 @@ class SftpFileSystem(FileSystem):
         self.notify_file_removed(path)
 
     def touch(self, path):
+        if not self._is_server_path(path):
+            raise OSError(errno.EADDRNOTAVAIL, "File path invalid")
         if self.exists(path):
             raise OSError(errno.EEXIST, "File exists")
         with SftpWrapper(self.scheme + path) as sftp:
