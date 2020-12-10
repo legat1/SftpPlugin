@@ -6,18 +6,15 @@ from datetime import datetime
 import errno
 from io import UnsupportedOperation
 from os.path import basename as path_basename, dirname as path_dirname, join as path_join
-import re
 import stat
 from tempfile import NamedTemporaryFile
 
 from .sftp import SftpConfig, SftpWrapper
-
-is_file = re.compile('^file://').match
-is_sftp = re.compile('^sftp://').match
+from .config import Config, is_file, is_sftp
 
 
 class SftpFileSystem(FileSystem):
-    scheme = 'sftp://'
+    scheme = Config.scheme
 
     def get_default_columns(self, path):
         return (

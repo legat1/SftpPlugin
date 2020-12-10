@@ -1,6 +1,7 @@
-from fman import DirectoryPaneCommand, ApplicationCommand, QuicksearchItem, show_quicksearch, show_status_message
+from fman import DirectoryPaneCommand, DirectoryPaneListener, ApplicationCommand, QuicksearchItem, show_quicksearch, show_status_message
 
 from .sftp import SftpWrapper
+from .config import Config
 
 
 class OpenSftp(DirectoryPaneCommand):
@@ -35,3 +36,13 @@ class CloseSftp(ApplicationCommand):
                 # The characters that should be highlighted:
                 highlight = range(index, index + len(query))
                 yield QuicksearchItem(item, highlight=highlight)
+
+
+class SftpEditListener(DirectoryPaneListener):
+    def on_command(self, command_name, args):
+        if command_name in ('open_with_editor', 'create_directory', 'create_and_edit_file', 'rename', 'move_to_trash'):
+            url = args.get('url', self.pane.get_path())
+            if url == Config.scheme:
+                new_args = dict(args)
+                new_args['url'] = 'file://' + Config.file_path
+                return 'open_with_editor', new_args

@@ -1,7 +1,7 @@
 from fman import show_status_message
 from fman.url import splitscheme
 
-from os.path import expanduser
+from .config import Config
 
 #
 # In order to load the Paramiko library, we need to put the
@@ -17,7 +17,7 @@ except ImportError:
 
 
 class SftpConfig():
-    _config = paramiko.config.SSHConfig.from_path(expanduser('~/.ssh/config'))
+    _config = paramiko.config.SSHConfig.from_path(Config.file_path)
 
     @staticmethod
     def get_host(host_name):
