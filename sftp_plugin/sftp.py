@@ -97,7 +97,11 @@ class SftpWrapper():
             proxy = paramiko.ProxyCommand(host['proxycommand'])
         except:
             proxy = None
-        client.connect(hostname=host['hostname'], username=host['user'], key_filename=host['identityfile'][0], sock=proxy)
+        if 'identityfile' in host:
+            key = host['identityfile'][0]
+        else:
+            key = None
+        client.connect(hostname=host['hostname'], username=host['user'], key_filename=key, sock=proxy)
         return client.open_sftp()
 
     def _close_connection(self):
