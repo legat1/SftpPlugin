@@ -1,4 +1,4 @@
-from fman import show_status_message
+from fman import show_prompt, show_status_message
 from fman.url import splitscheme
 
 from .config import Config
@@ -99,9 +99,13 @@ class SftpWrapper():
             proxy = None
         if 'identityfile' in host:
             key = host['identityfile'][0]
+            password = None
         else:
             key = None
-        client.connect(hostname=host['hostname'], username=host['user'], key_filename=key, sock=proxy)
+            password, ok = show_prompt('Please enter password')
+            if not ok or not password:
+                raise ValueError
+        client.connect(hostname=host['hostname'], username=host['user'], password=password, key_filename=key, sock=proxy)
         return client.open_sftp()
 
     def _close_connection(self):

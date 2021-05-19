@@ -1,4 +1,5 @@
 from fman import DirectoryPaneCommand, DirectoryPaneListener, ApplicationCommand, QuicksearchItem, show_quicksearch, show_status_message
+from fman.url import splitscheme
 
 from .sftp import SftpWrapper
 from .config import Config
@@ -8,7 +9,7 @@ class OpenSftp(DirectoryPaneCommand):
     aliases = ('Open sftp connection',)
 
     def __call__(self):
-        self.pane.set_path('sftp://')
+        self.pane.set_path(Config.scheme)
 
 
 class CloseSftp(ApplicationCommand):
@@ -23,6 +24,7 @@ class CloseSftp(ApplicationCommand):
                 if value:
                     SftpWrapper.close_connection(value)
                     show_status_message('Connection '+value+' closed.')
+                    self._exit_current(value)
         else:
             show_status_message('No active connection.')
 
@@ -37,6 +39,12 @@ class CloseSftp(ApplicationCommand):
                 highlight = range(index, index + len(query))
                 yield QuicksearchItem(item, highlight=highlight)
 
+    def _exit_current(self, server):
+        for pane in self.window.get_panes():
+            scheme, path = splitscheme(pane.get_path())
+            if scheme == Config.scheme and path and len(path.split('/')) > 0 and path.split('/')[0] == server:
+                pane.set_path(Config.scheme)
+
 
 class SftpEditListener(DirectoryPaneListener):
     def on_command(self, command_name, args):
@@ -46,3 +54,4 @@ class SftpEditListener(DirectoryPaneListener):
                 new_args = dict(args)
                 new_args['url'] = 'file://' + Config.file_path
                 return 'open_with_editor', new_args
+

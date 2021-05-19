@@ -58,15 +58,18 @@ class SftpFileSystem(FileSystem):
             return ''
 
     def iterdir(self, path):
-        if not path:
-            for hostname in SftpConfig.get_all_hosts():
-                if hostname != '*':
-                    yield hostname
-        else:
-            with SftpWrapper(self.scheme + path) as sftp:
-                for file_attributes in sftp.conn.listdir_iter(sftp.path):
-                    self.save_stats(path_join(path, file_attributes.filename), file_attributes)
-                    yield file_attributes.filename
+        try:
+            if not path:
+                for hostname in SftpConfig.get_all_hosts():
+                    if hostname != '*':
+                        yield hostname
+            else:
+                with SftpWrapper(self.scheme + path) as sftp:
+                    for file_attributes in sftp.conn.listdir_iter(sftp.path):
+                        self.save_stats(path_join(path, file_attributes.filename), file_attributes)
+                        yield file_attributes.filename
+        except:
+            raise FileNotFoundError
 
     @cached
     def exists(self, path):
