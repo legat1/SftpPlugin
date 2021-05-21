@@ -32,7 +32,6 @@ class SftpWrapper():
     _connections = {}
 
     def __init__(self, url):
-        self._url = url
         _, path = splitscheme(url)
         self._host, self._path = self._parse_path(path)
 
@@ -48,7 +47,6 @@ class SftpWrapper():
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):
-        # self._close_connection()
         return
 
     @property

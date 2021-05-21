@@ -6,11 +6,27 @@ from os.path import expanduser
 class Config():
     scheme = 'sftp://'
     file_path = expanduser('~/.ssh/config')
+    ftp_scheme = 'ftp://'
+    add_ftp_server = 'add ftp server'
+    ftp_file = 'FTP History.json'
 
 def is_file(url):
-    scheme, _ = splitscheme(url)
-    return scheme == 'file://'
+    try:
+        scheme, _ = splitscheme(url)
+        return scheme == 'file://'
+    except ValueError:
+        return False
 
 def is_sftp(url):
-    scheme, _ = splitscheme(url)
-    return scheme == Config.scheme
+    try:
+        scheme, _ = splitscheme(url)
+        return scheme == Config.scheme
+    except ValueError:
+        return False
+
+def is_ftp(url):
+    try:
+        scheme, _ = splitscheme(url)
+        return scheme == Config.ftp_scheme
+    except ValueError:
+        return False

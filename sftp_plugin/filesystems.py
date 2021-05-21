@@ -1,15 +1,16 @@
-from fman import Task, submit_task, fs, show_status_message
+from fman import Task, submit_task, fs, load_json, show_status_message, show_alert
 from fman.fs import FileSystem, cached
 from fman.url import basename as url_basename, join as url_join, splitscheme
 
 from datetime import datetime
 import errno
 from io import UnsupportedOperation
-from os.path import basename as path_basename, dirname as path_dirname, join as path_join
+from os.path import basename as path_basename, join as path_join
 import stat
 from tempfile import NamedTemporaryFile
 
 from .sftp import SftpConfig, SftpWrapper
+from .ftp import FtpWrapper
 from .config import Config, is_file, is_sftp
 
 
@@ -241,3 +242,59 @@ class SftpFileSystem(FileSystem):
         self.cache.put(path, 'get_permissions', st_mode)
         self.cache.put(path, 'get_owner', file_attributes.st_uid)
         self.cache.put(path, 'get_group', file_attributes.st_gid)
+
+
+class FtpFileSystem(FileSystem):
+    scheme = Config.ftp_scheme
+
+    def iterdir(self, path):
+        # show_alert('iterdir '+path)
+        if not path:
+            yield Config.add_ftp_server
+            yield from self._all_history_connections().keys()
+        else:
+            ftp_path =  self._history_connection(path) if self._is_history_connection(path) else self.scheme + path
+            with FtpWrapper(ftp_path) as ftp:
+                for file_attributes in ftp.list_files():
+                    name, size, timestamp, isdirectory, downloadable, islink, permissions = file_attributes
+                    if name == '..':
+                        continue
+                    self.save_stats(path_join(path, name), file_attributes)
+                    yield name
+
+    @cached
+    def exists(self, path):
+        # show_alert('exists '+path)
+        if not path or path == Config.add_ftp_server or self._is_history_connection(path):
+            return True
+        try:
+            self.cache.get(path, 'is_dir')
+            return True
+        except KeyError:
+            return False
+
+    @cached
+    def is_dir(self, path):
+        if path and self._is_history_connection(path):
+            return True
+        try:
+            return self.cache.get(path, 'is_dir')
+        except KeyError:
+            return False
+
+    def _all_history_connections(self):
+        return load_json(Config.ftp_file, default={})
+
+    def _history_connection(self, path):
+        return self._all_history_connections().get(path, '')
+
+    @cached
+    def _is_history_connection(self, path):
+        return path in self._all_history_connections().keys()
+
+    def samefile(self, path1, path2):
+        return path1 == path2
+
+    def save_stats(self, path, file_attributes):
+        name, size, timestamp, isdirectory, downloadable, islink, permissions = file_attributes
+        self.cache.put(path, 'is_dir', isdirectory)
