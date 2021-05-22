@@ -7,7 +7,6 @@ class Config():
     scheme = 'sftp://'
     file_path = expanduser('~/.ssh/config')
     ftp_scheme = 'ftp://'
-    add_ftp_server = 'add ftp server'
     ftp_file = 'FTP History.json'
 
 def is_file(url):

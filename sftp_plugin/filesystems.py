@@ -1,4 +1,4 @@
-from fman import Task, submit_task, fs, load_json, show_status_message, show_alert
+from fman import Task, submit_task, fs, load_json, save_json, show_status_message, show_alert
 from fman.fs import FileSystem, cached
 from fman.url import basename as url_basename, join as url_join, splitscheme
 
@@ -8,6 +8,7 @@ from io import UnsupportedOperation
 from os.path import basename as path_basename, join as path_join
 import stat
 from tempfile import NamedTemporaryFile
+from urllib.parse import urlparse
 
 from .sftp import SftpConfig, SftpWrapper
 from .ftp import FtpWrapper
@@ -110,6 +111,7 @@ class SftpFileSystem(FileSystem):
             sftp.conn.mkdir(sftp.path)
         self.cache.put(path, 'is_dir', True)
         self.notify_file_added(path)
+        show_status_message('Directory added.')
 
     def prepare_copy(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
@@ -250,7 +252,6 @@ class FtpFileSystem(FileSystem):
     def iterdir(self, path):
         # show_alert('iterdir '+path)
         if not path:
-            yield Config.add_ftp_server
             yield from self._all_history_connections().keys()
         else:
             ftp_path =  self._history_connection(path) if self._is_history_connection(path) else self.scheme + path
@@ -265,7 +266,7 @@ class FtpFileSystem(FileSystem):
     @cached
     def exists(self, path):
         # show_alert('exists '+path)
-        if not path or path == Config.add_ftp_server or self._is_history_connection(path):
+        if not path or self._is_history_connection(path):
             return True
         try:
             self.cache.get(path, 'is_dir')
@@ -285,12 +286,70 @@ class FtpFileSystem(FileSystem):
     def _all_history_connections(self):
         return load_json(Config.ftp_file, default={})
 
+    def _save_history_connections(self, value=None):
+        save_json(Config.ftp_file, value)
+
     def _history_connection(self, path):
         return self._all_history_connections().get(path, '')
 
     @cached
     def _is_history_connection(self, path):
         return path in self._all_history_connections().keys()
+
+    def mkdir(self, path):
+        # show_alert('mkdir '+path)
+        if not path:
+            show_status_message('Destination path invalid.')
+            return
+        if self.is_dir(path):
+            show_status_message('Directory already exists.')
+            return
+        if self._is_history_connection(urlparse(self.scheme + path).hostname):
+            with FtpWrapper(self.scheme + path) as ftp:
+                ftp.conn.mkd(ftp.home + ftp.path)
+            self.cache.put(path, 'is_dir', True)
+            self.notify_file_added(path)
+            show_status_message('Directory added.')
+        else:
+            try:
+                with FtpWrapper(self.scheme + path) as ftp:
+                    history = self._all_history_connections()
+                    history[ftp.host] = self.scheme + path
+                    self._save_history_connections(history)
+                    self.cache.put(ftp.host, 'is_dir', True)
+                    self.notify_file_added(ftp.host)
+                    show_status_message('Server added.')
+            except:
+                show_status_message('Server connection error.')
+                show_alert('URL should be [user[:password]@]ftp.host[:port][/path/to/dir]')
+
+    def prepare_delete(self, path):
+        if self._is_history_connection(path):
+            history = self._all_history_connections()
+            del history[path]
+            self._save_history_connections(history)
+            self.cache.clear(path)
+            self.notify_file_removed(path)
+            show_status_message('Server deleted.')
+            return []
+        return self._prepare_delete(path)
+
+    def _prepare_delete(self, path):
+        if self.is_dir(path):
+            for fname in self.iterdir(path):
+                yield from self._prepare_delete(path_join(path, fname))
+        yield Task('Deleting ' + path_basename(path), fn=self.delete, args=(path,))
+
+    def delete(self, path):
+        with FtpWrapper(self.scheme + path) as ftp:
+            if self.is_dir(path):
+                ftp.conn.rmd(ftp.home + ftp.path)
+                show_status_message('Directory deleted.')
+            else:
+                ftp.conn.delete(ftp.home + ftp.path)
+                show_status_message('File deleted.')
+        self.cache.clear(path)
+        self.notify_file_removed(path)
 
     def samefile(self, path1, path2):
         return path1 == path2

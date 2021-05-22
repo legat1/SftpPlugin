@@ -62,8 +62,8 @@ class SftpEditListener(DirectoryPaneListener):
 class OpenFtp(DirectoryPaneCommand):
     aliases = ('Open ftp connection',)
 
-    def __call__(self, url=Config.ftp_scheme):
-        self.pane.set_path(url)
+    def __call__(self):
+        self.pane.set_path(Config.ftp_scheme)
 
 
 class CloseFtp(ApplicationCommand):
@@ -98,22 +98,3 @@ class CloseFtp(ApplicationCommand):
             if is_ftp(pane.get_path()) and urlparse(pane.get_path()).hostname == server:
                 pane.set_path(Config.ftp_scheme)
 
-
-class FtpAddListener(DirectoryPaneListener):
-    def on_command(self, command_name, args):
-        # show_alert(command_name)
-        if command_name == 'open_file':
-            scheme, path = splitscheme(args.get('url', self.pane.get_path()))
-            if scheme == Config.ftp_scheme and path == Config.add_ftp_server:
-                url, ok = show_prompt('Please enter the URL', default=args.get('prompt_url', 'ftp://[user[:password]@]ftp.host[:port][/path/to/dir]'))
-                if not (url and ok):
-                    return 'open_ftp', {'url': Config.ftp_scheme}
-                if not is_ftp(url):
-                    show_alert('URL must include the following scheme: ftp://')
-                    new_args = dict(args)
-                    new_args['prompt_url'] = url
-                    return command_name, new_args
-                with FtpWrapper(url) as ftp:
-                    history = load_json(Config.ftp_file, default={}, save_on_quit=True)
-                    history[ftp.host] = url
-                    return 'open_ftp', {'url': Config.ftp_scheme + ftp.host}
