@@ -40,13 +40,7 @@ class FtpWrapper():
     def conn(self):
         if not self._is_connected():
             raise Exception('Not connected')
-        return FtpWrapper._connections[self.host]['conn']
-
-    @property
-    def home(self):
-        if not self._is_connected():
-            raise Exception('Not connected')
-        return FtpWrapper._connections[self.host]['home']
+        return FtpWrapper._connections[self.host]
 
     @property
     def host(self):
@@ -65,28 +59,34 @@ class FtpWrapper():
         if host not in FtpWrapper._connections:
             return
         try:
-            FtpWrapper._connections[host]['conn'].quit()
+            FtpWrapper._connections[host].quit()
         except:
             pass
         finally:
             del FtpWrapper._connections[host]
 
     def list_files(self):
-        path = self.path if self.path.startswith(self.home) else self.home + self.path
         cmd = 'LIST'
-        cmd = cmd + (' ' + path)
+        cmd = cmd + (' ' + self.path)
         files = []
         self.conn.retrlines(cmd, files.append)
         return ftpparser.FTPParser().parse(files)
 
     def _connection(self):
         ftp = FTP(host=self.host, user=self._url.username, passwd=self._url.password)
-        ftp.cwd(self.path)
+        # ftp.cwd(self.path)
         ftp.encoding = 'utf-8'
-        return {'conn': ftp, 'home': self.path}
+        return ftp
 
     def _close_connection(self):
         FtpWrapper.close_connection(self.host)
 
     def _is_connected(self):
-        return self.host in FtpWrapper._connections
+        if self.host not in FtpWrapper._connections:
+            return False
+        try:
+            FtpWrapper._connections[self.host].voidcmd('TYPE I')
+            return True
+        except:
+            return False
+

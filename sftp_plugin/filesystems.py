@@ -1,11 +1,11 @@
 from fman import Task, submit_task, fs, load_json, save_json, show_status_message, show_alert
 from fman.fs import FileSystem, cached
-from fman.url import basename as url_basename, join as url_join, splitscheme
+from fman.url import basename as url_basename, dirname as url_dirname, join as url_join, splitscheme, normalize as url_normalize
 
 from datetime import datetime
 import errno
 from io import UnsupportedOperation
-from os.path import basename as path_basename, join as path_join
+from os.path import basename as path_basename, dirname as path_dirname, join as path_join, getsize as path_getsize
 import stat
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
@@ -247,41 +247,38 @@ class SftpFileSystem(FileSystem):
 
 class FtpFileSystem(FileSystem):
     scheme = Config.ftp_scheme
+    _is_dir_cache = {}
 
     def iterdir(self, path):
-        # show_alert('iterdir '+path)
         try:
             if not path:
                 yield from self._all_history_connections().keys()
             else:
-                ftp_path =  self._history_connection(path) if self._is_history_connection(path) else self.scheme + path
-                with FtpWrapper(ftp_path) as ftp:
+                with FtpWrapper(self._ftp_url(path)) as ftp:
+                    self._is_dir_cache[path] = {}
                     for file_attributes in ftp.list_files():
-                        name, size, timestamp, isdirectory, downloadable, islink, permissions = file_attributes
+                        name = file_attributes[0]
                         if name == '..':
                             continue
-                        self.save_stats(path_join(path, name), file_attributes)
+                        self.save_stats(path, file_attributes)
                         yield name
         except:
             raise FileNotFoundError
 
-    @cached
     def exists(self, path):
-        # show_alert('exists '+path)
-        if not path or self._is_history_connection(path):
+        if not path or self._is_server_name(path):
             return True
         try:
-            self.cache.get(path, 'is_dir')
+            self._is_dir_cache[path_dirname(path)][path_basename(path)]
             return True
         except KeyError:
             return False
-
-    @cached
+ 
     def is_dir(self, path):
-        if path and self._is_history_connection(path):
+        if not path or self._is_server_name(path):
             return True
         try:
-            return self.cache.get(path, 'is_dir')
+            return self._is_dir_cache[path_dirname(path)][path_basename(path)]
         except KeyError:
             return False
 
@@ -291,33 +288,35 @@ class FtpFileSystem(FileSystem):
     def _save_history_connections(self, value=None):
         save_json(Config.ftp_file, value)
 
-    def _history_connection(self, path):
-        return self._all_history_connections().get(path, '')
+    def _is_server_path(self, path):
+        return path and len(path.split('/')) > 1 and self._is_server_name(path.split('/')[0])
 
-    def _is_history_connection(self, path):
+    def _is_server_name(self, path):
         return path in self._all_history_connections().keys()
 
+    def _ftp_url(self, path):
+        url = urlparse(path) if path.startswith(self.scheme) else urlparse(self.scheme + path)
+        return url_normalize(url_join(self._all_history_connections().get(url.hostname, self.scheme + url.hostname), url.path))
+        
     def mkdir(self, path):
-        # show_alert('mkdir '+path)
         if not path:
             show_status_message('Destination path invalid.')
             return
         if self.is_dir(path):
             show_status_message('Directory already exists.')
             return
-        if self._is_history_connection(urlparse(self.scheme + path).hostname):
-            with FtpWrapper(self.scheme + path) as ftp:
-                ftp.conn.mkd(ftp.home + ftp.path)
-            self.cache.put(path, 'is_dir', True)
+        if self._is_server_path(path):
+            with FtpWrapper(self._ftp_url(path)) as ftp:
+                ftp.conn.mkd(ftp.path)
+            self._is_dir_cache[path_dirname(path)][path_basename(path)] = True
             self.notify_file_added(path)
             show_status_message('Directory added.')
         else:
             try:
-                with FtpWrapper(self.scheme + path) as ftp:
+                with FtpWrapper(self._ftp_url(path)) as ftp:
                     history = self._all_history_connections()
                     history[ftp.host] = self.scheme + path
                     self._save_history_connections(history)
-                    self.cache.put(ftp.host, 'is_dir', True)
                     self.notify_file_added(ftp.host)
                     show_status_message('Server added.')
             except:
@@ -326,7 +325,7 @@ class FtpFileSystem(FileSystem):
 
     def prepare_copy(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
-        if is_ftp(dst_url) and not self._is_history_connection(urlparse(dst_url).hostname):
+        if is_ftp(dst_url) and not self._is_server_path(dst_path):
             show_status_message('Destination path invalid.')
             return []
         return self._prepare_copy(src_url, dst_url)
@@ -353,52 +352,32 @@ class FtpFileSystem(FileSystem):
             for fname in files_to_copy:
                 yield from self._prepare_copy(url_join(src_url, fname), url_join(dst_url, fname))
         else:
-            yield Task('Copying ' + url_basename(src_url), fn=self.copy, args=(src_url, dst_url))
-
-    def copy(self, src_url, dst_url):
-        _, src_path = splitscheme(src_url)
-        _, dst_path = splitscheme(dst_url)
-            
-        if is_ftp(src_url) and is_file(dst_url):
-            with FtpWrapper(src_url) as ftp, open(dst_path, 'wb') as dst_file:
-                ftp.conn.retrbinary('RETR ' + ftp.home + ftp.path, dst_file.write)
-        elif is_file(src_url) and is_ftp(dst_url):
-            with FtpWrapper(dst_url) as ftp, open(src_path, 'rb') as src_file:
-                ftp.conn.storbinary('STOR ' + ftp.home + ftp.path, src_file)
-            self.cache.put(dst_path, 'is_dir', False)
-            self.notify_file_added(dst_path)
-        elif is_ftp(src_url) and is_ftp(dst_url):
-            with FtpWrapper(src_url) as src_ftp, FtpWrapper(dst_url) as dst_ftp, NamedTemporaryFile(delete=True) as tmp_file:
-                src_ftp.conn.retrbinary('RETR ' + src_ftp.home + src_ftp.path, tmp_file.write)
-                dst_ftp.conn.storbinary('STOR ' + dst_ftp.home + dst_ftp.path, tmp_file)
-            self.cache.put(dst_path, 'is_dir', False)
-            self.notify_file_added(dst_path)  
-        else:
-            raise UnsupportedOperation
+            yield _FtpCopyFileTask(self, src_url, dst_url)
 
     def prepare_move(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
-        if is_ftp(dst_url) and not self._is_history_connection(urlparse(dst_url).hostname):
+        if is_ftp(dst_url) and not self._is_server_path(dst_path):
             show_status_message('Destination path invalid.')
             return []
-        return [Task('Moving ' + url_basename(src_url), fn=self.move, args=(src_url, dst_url))]
+        
+        return [Task('Moving ' + url_basename(src_url), fn=self._move, args=(src_url, dst_url))]
 
-    def move(self, src_url, dst_url):
+    def _move(self, src_url, dst_url):
         _, src_path = splitscheme(src_url)
         _, dst_path = splitscheme(dst_url)
 
         # Rename on same server
         if is_ftp(src_url) and is_ftp(dst_url):
-            with FtpWrapper(src_url) as src_ftp, FtpWrapper(dst_url) as dst_ftp:
+            with FtpWrapper(self._ftp_url(src_url)) as src_ftp, FtpWrapper(self._ftp_url(dst_url)) as dst_ftp:
                 if src_ftp.host == dst_ftp.host:
-                    src_ftp.conn.rename(src_ftp.home + src_ftp.path, dst_ftp.home + dst_ftp.path)
-                    self.cache.put(dst_path, 'is_dir', self.is_dir(src_path))
+                    src_ftp.conn.rename(src_ftp.path, dst_ftp.path)
+                    self._is_dir_cache[path_dirname(dst_path)][path_basename(dst_path)] = self._is_dir_cache[path_dirname(src_path)].pop(path_basename(src_path))
                     self.notify_file_added(dst_path)
-                    self.cache.clear(src_path)
                     self.notify_file_removed(src_path)
                     return
 
-        self.copy(src_url, dst_url)
+        for task in self.prepare_copy(src_url, dst_url):
+            submit_task(task)
 
         if is_ftp(src_url):
             for task in self.prepare_delete(src_path):
@@ -409,11 +388,10 @@ class FtpFileSystem(FileSystem):
             raise UnsupportedOperation
 
     def prepare_delete(self, path):
-        if self._is_history_connection(path):
+        if self._is_server_name(path):
             history = self._all_history_connections()
             del history[path]
             self._save_history_connections(history)
-            self.cache.clear(path)
             self.notify_file_removed(path)
             show_status_message('Server deleted.')
             return []
@@ -423,27 +401,27 @@ class FtpFileSystem(FileSystem):
         if self.is_dir(path):
             for fname in self.iterdir(path):
                 yield from self._prepare_delete(path_join(path, fname))
-        yield Task('Deleting ' + path_basename(path), fn=self.delete, args=(path,))
+        yield Task('Deleting ' + path_basename(path), fn=self._delete, args=(path,))
 
-    def delete(self, path):
-        with FtpWrapper(self.scheme + path) as ftp:
+    def _delete(self, path):
+        with FtpWrapper(self._ftp_url(path)) as ftp:
             if self.is_dir(path):
-                ftp.conn.rmd(ftp.home + ftp.path)
+                ftp.conn.rmd(ftp.path)
                 show_status_message('Directory deleted.')
             else:
-                ftp.conn.delete(ftp.home + ftp.path)
+                ftp.conn.delete(ftp.path)
                 show_status_message('File deleted.')
-        self.cache.clear(path)
+        del self._is_dir_cache[path_dirname(path)][path_basename(path)]
         self.notify_file_removed(path)
 
     def touch(self, path):
-        if not self._is_history_connection(urlparse(self.scheme + path).hostname):
+        if not self._is_server_path(path):
             raise OSError(errno.EADDRNOTAVAIL, "File path invalid")
         if self.exists(path):
             raise OSError(errno.EEXIST, "File exists")
-        with FtpWrapper(self.scheme + path) as ftp, NamedTemporaryFile(delete=True) as tmp_file:
-            ftp.conn.storbinary('STOR ' + ftp.home + ftp.path, tmp_file)
-        self.cache.put(path, 'is_dir', False)
+        with FtpWrapper(self._ftp_url(path)) as ftp, NamedTemporaryFile(delete=True) as tmp_file:
+            ftp.conn.storbinary('STOR ' + ftp.path, tmp_file)
+        self._is_dir_cache[path_dirname(path)][path_basename(path)] = False
         self.notify_file_added(path)
         show_status_message('File added.')
 
@@ -452,4 +430,58 @@ class FtpFileSystem(FileSystem):
 
     def save_stats(self, path, file_attributes):
         name, size, timestamp, isdirectory, downloadable, islink, permissions = file_attributes
-        self.cache.put(path, 'is_dir', isdirectory)
+        self._is_dir_cache[path][name] = bool(isdirectory)
+
+
+class _FtpCopyFileTask(Task):
+    def __init__(self, file_system, src_url, dst_url):
+        super().__init__('Copying ' + url_basename(src_url))
+        self._file_system = file_system
+        self._src_url = src_url
+        self._dst_url = dst_url
+        self._size_written = 0
+        self._set_size(src_url)
+
+    def __call__(self):
+        self._copy(self._src_url, self._dst_url)
+
+    def _set_size(self, src_url):
+        _, src_path = splitscheme(src_url)
+
+        if is_ftp(src_url):
+            with FtpWrapper(self._file_system._ftp_url(src_url)) as ftp:
+                self.set_size(ftp.conn.size(ftp.path))
+        elif is_file(src_url):
+            self.set_size(path_getsize(src_path))
+        else:
+            raise UnsupportedOperation
+
+    def _copy(self, src_url, dst_url):
+        _, src_path = splitscheme(src_url)
+        _, dst_path = splitscheme(dst_url)
+            
+        if is_ftp(src_url) and is_file(dst_url):
+            with FtpWrapper(self._file_system._ftp_url(src_url)) as ftp, open(dst_path, 'wb') as dst_file:
+                def callback(data):
+                    self._size_written += dst_file.write(data)
+                    self.set_progress(self._size_written)
+                ftp.conn.retrbinary('RETR ' + ftp.path, callback)
+        elif is_file(src_url) and is_ftp(dst_url):
+            with FtpWrapper(self._file_system._ftp_url(dst_url)) as ftp, open(src_path, 'rb') as src_file:
+                def callback(data):
+                    self._size_written += len(data)
+                    self.set_progress(self._size_written)
+                ftp.conn.storbinary('STOR ' + ftp.path, src_file, callback=callback)
+            self._file_system._is_dir_cache[path_dirname(dst_path)][path_basename(dst_path)] = False
+            self._file_system.notify_file_added(dst_path)
+        elif is_ftp(src_url) and is_ftp(dst_url):
+            with FtpWrapper(self._file_system._ftp_url(src_url)) as src_ftp, FtpWrapper(self._file_system._ftp_url(dst_url)) as dst_ftp, NamedTemporaryFile(delete=True) as tmp_file:
+                def callback(data):
+                    self._size_written += len(data)
+                    self.set_progress(self._size_written)
+                src_ftp.conn.retrbinary('RETR ' + src_ftp.path, tmp_file.write)
+                dst_ftp.conn.storbinary('STOR ' + dst_ftp.path, tmp_file, callback=callback)
+            self._file_system._is_dir_cache[path_dirname(dst_path)][path_basename(dst_path)] = False
+            self._file_system.notify_file_added(dst_path)  
+        else:
+            raise UnsupportedOperation
