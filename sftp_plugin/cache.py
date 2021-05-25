@@ -1,9 +1,7 @@
 from os.path import basename as path_basename, dirname as path_dirname
 
 
-class FtpCache():
-    _cache = {}
-    
+class Cache():
     @classmethod
     def put(cls, path, attr, value):
         cls._cache.setdefault(attr, {}).setdefault(path_dirname(path), {})[path_basename(path)] = value
@@ -31,3 +29,11 @@ class FtpCache():
             return cls._cache[attr][path_dirname(path)].pop(path_basename(path), default)
         except KeyError:
             return default
+
+
+class SftpCache(Cache):
+    _cache = {}
+
+
+class FtpCache(Cache):
+    _cache = {}

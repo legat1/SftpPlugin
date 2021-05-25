@@ -1,5 +1,5 @@
 from fman import Task, submit_task, fs, load_json, save_json, show_status_message, show_alert
-from fman.fs import FileSystem, cached
+from fman.fs import FileSystem, cached, notify_file_added as url_notify_file_added
 from fman.url import basename as url_basename, dirname as url_dirname, join as url_join, splitscheme, normalize as url_normalize
 
 from datetime import datetime
@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from .sftp import SftpConfig, SftpWrapper
 from .ftp import FtpWrapper
 from .config import Config, is_file, is_sftp, is_ftp
-from .cache import FtpCache
+from .cache import SftpCache, FtpCache
 
 
 class SftpFileSystem(FileSystem):
@@ -68,36 +68,28 @@ class SftpFileSystem(FileSystem):
                         yield hostname
             else:
                 with SftpWrapper(self.scheme + path) as sftp:
+                    SftpCache.clear(path, 'is_dir', only_content=True)
                     for file_attributes in sftp.conn.listdir_iter(sftp.path):
                         self.save_stats(path_join(path, file_attributes.filename), file_attributes)
                         yield file_attributes.filename
         except:
             raise FileNotFoundError
 
-    @cached
     def exists(self, path):
         if not path or self._is_server_name(path):
             return True
-        try:
-            self.cache.get(path, 'is_dir')
-            return True
-        except KeyError:
+        if SftpCache.get(path, 'is_dir') is None:
             return False
+        return True
 
-    @cached
     def is_dir(self, path):
         if not path or self._is_server_name(path):
             return True
-        try:
-            return self.cache.get(path, 'is_dir')
-        except KeyError:
-            return False
+        return SftpCache.get(path, 'is_dir', False)
 
-    @cached
     def _is_server_path(self, path):
         return path and len(path.split('/')) > 1 and self._is_server_name(path.split('/')[0])
 
-    @cached
     def _is_server_name(self, path):
         return path in SftpConfig.get_all_hosts()
         
@@ -110,7 +102,7 @@ class SftpFileSystem(FileSystem):
             return
         with SftpWrapper(self.scheme + path) as sftp:
             sftp.conn.mkdir(sftp.path)
-        self.cache.put(path, 'is_dir', True)
+        SftpCache.put(path, 'is_dir', True)
         self.notify_file_added(path)
         show_status_message('Directory added.')
 
@@ -143,37 +135,16 @@ class SftpFileSystem(FileSystem):
             for fname in files_to_copy:
                 yield from self._prepare_copy(url_join(src_url, fname), url_join(dst_url, fname))
         else:
-            yield Task('Copying ' + url_basename(src_url), fn=self.copy, args=(src_url, dst_url))
-
-    def copy(self, src_url, dst_url):
-        _, src_path = splitscheme(src_url)
-        _, dst_path = splitscheme(dst_url)
-            
-        if is_sftp(src_url) and is_file(dst_url):
-            with SftpWrapper(src_url) as sftp:
-                sftp.conn.get(sftp.path, dst_path)    
-        elif is_file(src_url) and is_sftp(dst_url):
-            with SftpWrapper(dst_url) as sftp:
-                sftp.conn.put(src_path, sftp.path)
-            self.cache.put(dst_path, 'is_dir', False)
-            self.notify_file_added(dst_path)
-        elif is_sftp(src_url) and is_sftp(dst_url):
-            with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
-                with src_sftp.conn.open(src_sftp.path) as src_file:
-                    dst_sftp.conn.putfo(src_file, dst_sftp.path) 
-            self.cache.put(dst_path, 'is_dir', False)
-            self.notify_file_added(dst_path)  
-        else:
-            raise UnsupportedOperation
+            yield _SftpCopyFileTask(self, src_url, dst_url)
 
     def prepare_move(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
         if is_sftp(dst_url) and not self._is_server_path(dst_path):
             show_status_message('Destination path invalid.')
             return []
-        return [Task('Moving ' + url_basename(src_url), fn=self.move, args=(src_url, dst_url))]
+        return [Task('Moving ' + url_basename(src_url), fn=self._move, args=(src_url, dst_url))]
 
-    def move(self, src_url, dst_url):
+    def _move(self, src_url, dst_url):
         _, src_path = splitscheme(src_url)
         _, dst_path = splitscheme(dst_url)
 
@@ -182,13 +153,13 @@ class SftpFileSystem(FileSystem):
             with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
                 if src_sftp.host == dst_sftp.host:
                     src_sftp.conn.rename(src_sftp.path, dst_sftp.path)
-                    self.cache.put(dst_path, 'is_dir', self.is_dir(src_path))
+                    SftpCache.put(dst_path, 'is_dir', SftpCache.pop(src_path, 'is_dir'))
                     self.notify_file_added(dst_path)
-                    self.cache.clear(src_path)
                     self.notify_file_removed(src_path)
                     return
 
-        self.copy(src_url, dst_url)
+        for task in self.prepare_copy(src_url, dst_url):
+            submit_task(task)
 
         if is_sftp(src_url):
             for task in self.prepare_delete(src_path):
@@ -208,15 +179,15 @@ class SftpFileSystem(FileSystem):
         if self.is_dir(path):
             for fname in self.iterdir(path):
                 yield from self._prepare_delete(path_join(path, fname))
-        yield Task('Deleting ' + path_basename(path), fn=self.delete, args=(path,))
+        yield Task('Deleting ' + path_basename(path), fn=self._delete, args=(path,))
 
-    def delete(self, path):
+    def _delete(self, path):
         with SftpWrapper(self.scheme + path) as sftp:
             if self.is_dir(path):
                 sftp.conn.rmdir(sftp.path)
             else:
                 sftp.conn.remove(sftp.path)
-        self.cache.clear(path)
+        SftpCache.clear(path, 'is_dir')
         self.notify_file_removed(path)
 
     def touch(self, path):
@@ -226,7 +197,7 @@ class SftpFileSystem(FileSystem):
             raise OSError(errno.EEXIST, "File exists")
         with SftpWrapper(self.scheme + path) as sftp, NamedTemporaryFile(delete=True) as tmp_file:
             sftp.conn.put(tmp_file.name, sftp.path)
-        self.cache.put(path, 'is_dir', False)
+        SftpCache.put(path, 'is_dir', False)
         self.notify_file_added(path)
 
 
@@ -238,12 +209,60 @@ class SftpFileSystem(FileSystem):
         dt_mtime = datetime.utcfromtimestamp(file_attributes.st_mtime)
         st_mode = stat.filemode(file_attributes.st_mode)
 
-        self.cache.put(path, 'is_dir', is_dir)
+        SftpCache.put(path, 'is_dir', is_dir)
         self.cache.put(path, 'size_bytes', file_attributes.st_size)
         self.cache.put(path, 'modified_datetime', dt_mtime)
         self.cache.put(path, 'get_permissions', st_mode)
         self.cache.put(path, 'get_owner', file_attributes.st_uid)
         self.cache.put(path, 'get_group', file_attributes.st_gid)
+
+
+class _SftpCopyFileTask(Task):
+    def __init__(self, file_system, src_url, dst_url):
+        super().__init__('Copying ' + url_basename(src_url))
+        self._file_system = file_system
+        self._src_url = src_url
+        self._dst_url = dst_url
+        self._set_size(src_url)
+
+    def __call__(self):
+        self._copy(self._src_url, self._dst_url)
+
+    def _set_size(self, src_url):
+        _, src_path = splitscheme(src_url)
+
+        if is_sftp(src_url):
+            with SftpWrapper(src_url) as sftp:
+                self.set_size(sftp.conn.stat(sftp.path).st_size)
+        elif is_file(src_url):
+            self.set_size(path_getsize(src_path))
+        else:
+            raise UnsupportedOperation
+
+    def _copy(self, src_url, dst_url):
+        _, src_path = splitscheme(src_url)
+        _, dst_path = splitscheme(dst_url)
+            
+        if is_sftp(src_url) and is_file(dst_url):
+            with SftpWrapper(src_url) as sftp:
+                sftp.conn.get(sftp.path, dst_path, callback=self._callback)
+            url_notify_file_added(dst_url)    
+        elif is_file(src_url) and is_sftp(dst_url):
+            with SftpWrapper(dst_url) as sftp:
+                sftp.conn.put(src_path, sftp.path, callback=self._callback)
+            SftpCache.put(dst_path, 'is_dir', False)
+            self._file_system.notify_file_added(dst_path)
+        elif is_sftp(src_url) and is_sftp(dst_url):
+            with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
+                with src_sftp.conn.open(src_sftp.path) as src_file:
+                    dst_sftp.conn.putfo(src_file, dst_sftp.path, callback=self._callback) 
+            SftpCache.put(dst_path, 'is_dir', False)
+            self._file_system.notify_file_added(dst_path)  
+        else:
+            raise UnsupportedOperation
+
+    def _callback(self, size, file_size):
+        self.set_progress(size)
 
 
 class FtpFileSystem(FileSystem):
@@ -461,6 +480,7 @@ class _FtpCopyFileTask(Task):
                     self._size_written += dst_file.write(data)
                     self.set_progress(self._size_written)
                 ftp.conn.retrbinary('RETR ' + ftp.path, callback)
+            url_notify_file_added(dst_url)
         elif is_file(src_url) and is_ftp(dst_url):
             with FtpWrapper(self._file_system._ftp_url(dst_url)) as ftp, open(src_path, 'rb') as src_file:
                 def callback(data):
