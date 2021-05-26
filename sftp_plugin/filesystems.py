@@ -209,13 +209,21 @@ class SftpFileSystem(FileSystem):
         is_dir = stat.S_ISDIR(file_attributes.st_mode)
         dt_mtime = datetime.utcfromtimestamp(file_attributes.st_mtime)
         st_mode = stat.filemode(file_attributes.st_mode)
+        try:
+            owner = file_attributes.longname.split()[2]
+        except:
+            owner = file_attributes.st_uid
+        try:
+            group = file_attributes.longname.split()[3]
+        except:
+            group = file_attributes.st_gid
 
         SftpCache.put(path, 'is_dir', is_dir)
         self.cache.put(path, 'size_bytes', file_attributes.st_size)
         self.cache.put(path, 'modified_datetime', dt_mtime)
         self.cache.put(path, 'get_permissions', st_mode)
-        self.cache.put(path, 'get_owner', file_attributes.st_uid)
-        self.cache.put(path, 'get_group', file_attributes.st_gid)
+        self.cache.put(path, 'get_owner', owner)
+        self.cache.put(path, 'get_group', group)
 
 
 class _SftpCopyFileTask(Task):
