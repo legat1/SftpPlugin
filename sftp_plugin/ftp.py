@@ -1,7 +1,10 @@
 from urllib.parse import urlparse
 from ftplib import FTP
 
-from fman import show_status_message
+from fman import load_json, save_json, show_status_message
+from fman.url import join as url_join, normalize as url_normalize
+
+from .config import Config
 
 #
 # In order to load the ftpparser library, we need to put the
@@ -14,6 +17,42 @@ except ImportError:
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))
     import ftpparser
+
+
+class FtpConfig():
+    @staticmethod
+    def get_all_host_names():
+        return FtpConfig._get_all_hosts().keys()
+
+    @staticmethod
+    def get_host(host_name):
+        return FtpConfig._get_all_hosts().get(host_name, Config.ftp_scheme + host_name)
+
+    @staticmethod
+    def add_host(host_name, host):
+        all_hosts = FtpConfig._get_all_hosts()
+        all_hosts[host_name] = host
+        FtpConfig._save_all_hosts(all_hosts)
+
+    @staticmethod
+    def remove_host(host_name):
+        all_hosts = FtpConfig._get_all_hosts()
+        if host_name in all_hosts:
+            del all_hosts[host_name]
+            FtpConfig._save_all_hosts(all_hosts)
+
+    @staticmethod
+    def get_host_url(url_or_path):
+        url = urlparse(url_or_path) if url_or_path.startswith(Config.ftp_scheme) else urlparse(Config.ftp_scheme + url_or_path)
+        return url_normalize(url_join(FtpConfig.get_host(url.hostname), url.path))
+
+    @staticmethod
+    def _get_all_hosts():
+        return load_json(Config.ftp_file, default={})
+
+    @staticmethod
+    def _save_all_hosts(value=None):
+        save_json(Config.ftp_file, value)
 
 
 class FtpWrapper():

@@ -1,13 +1,13 @@
 from fman.fs import Column, query
 
-from .filesystems import is_sftp
+from .filesystems import is_sftp, is_ftp
 
 
 class Permissions(Column):
     display_name = 'Permissions'
 
     def get_str(self, url):
-        if is_sftp(url):
+        if is_sftp(url) or is_ftp(url):
             return str(query(url, 'get_permissions'))
 
 
