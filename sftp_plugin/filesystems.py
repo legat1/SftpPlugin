@@ -68,7 +68,7 @@ class SftpFileSystem(FileSystem):
             else:
                 with SftpWrapper(self.scheme + path) as sftp:
                     SftpCache.clear(path, 'is_dir', only_content=True)
-                    for file_attributes in sftp.conn.listdir_iter(sftp.path):
+                    for file_attributes in sftp.conn.listdir_attr(sftp.path):
                         self.save_stats(path_join(path, file_attributes.filename), file_attributes)
                         yield file_attributes.filename
         except:
