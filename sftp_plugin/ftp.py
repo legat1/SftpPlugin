@@ -20,6 +20,8 @@ except ImportError:
 
 
 class FtpConfig():
+    _config = {}
+
     @staticmethod
     def get_all_host_names():
         return FtpConfig._get_all_hosts().keys()
@@ -48,11 +50,14 @@ class FtpConfig():
 
     @staticmethod
     def _get_all_hosts():
-        return load_json(Config.ftp_file, default={})
+        if not FtpConfig._config:
+            FtpConfig._config = load_json(Config.ftp_file, default=FtpConfig._config)
+        return FtpConfig._config
 
     @staticmethod
     def _save_all_hosts(value=None):
         save_json(Config.ftp_file, value)
+        FtpConfig._config = value
 
 
 class FtpWrapper():
