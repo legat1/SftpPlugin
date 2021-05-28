@@ -17,7 +17,7 @@ except ImportError:
 
 
 class SftpConfig():
-    _config = paramiko.config.SSHConfig.from_path(Config.file_path)
+    _config = paramiko.config.SSHConfig.from_path(Config.sftp_file)
 
     @staticmethod
     def get_host(host_name):

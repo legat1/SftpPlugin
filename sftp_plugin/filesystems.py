@@ -16,7 +16,7 @@ from .cache import SftpCache, FtpCache
 
 
 class SftpFileSystem(FileSystem):
-    scheme = Config.scheme
+    scheme = Config.sftp_scheme
 
     def get_default_columns(self, path):
         return (
@@ -522,3 +522,17 @@ class _FtpCopyFileTask(Task):
     def _callback(self, data):
         self._size_written += len(data)
         self.set_progress(self._size_written)
+
+
+class NetworkFileSystem(FileSystem):
+    scheme = Config.network_scheme
+
+    def iterdir(self, path):
+        yield 'ftp'
+        yield 'sftp'
+  
+    def exists(self, path):
+        return True
+ 
+    def is_dir(self, path):
+        return True

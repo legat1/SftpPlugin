@@ -1,4 +1,4 @@
 [
-	{ "keys": ["F3"], "command": "open_sftp" },
-	{ "keys": ["Shift+F3"], "command": "close_sftp" }
+	{ "keys": ["F3"], "command": "open_network" },
+	{ "keys": ["Shift+F3"], "command": "close_network" }
 ]
