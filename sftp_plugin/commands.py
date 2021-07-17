@@ -1,11 +1,17 @@
+from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
 
-from fman import DirectoryPaneCommand, DirectoryPaneListener, ApplicationCommand, QuicksearchItem, show_quicksearch, show_status_message, show_alert
-from fman.url import join as url_join, splitscheme
+from fman import (NO, YES, ApplicationCommand, DirectoryPaneCommand,
+                  DirectoryPaneListener, QuicksearchItem, show_alert,
+                  show_quicksearch, show_status_message, submit_task)
+from fman.fs import exists, is_dir
+from fman.url import join as url_join
+from fman.url import splitscheme
 
-from .sftp import SftpWrapper
-from .ftp import FtpWrapper
 from .config import Config, is_ftp, is_sftp
+from .filesystems import FtpCopyFileTask, SftpCopyFileTask
+from .ftp import FtpWrapper
+from .sftp import SftpWrapper
 
 
 class OpenSftp(DirectoryPaneCommand):
@@ -20,6 +26,44 @@ class OpenFtp(DirectoryPaneCommand):
 
     def __call__(self, url=Config.ftp_scheme):
         self.pane.set_path(url)
+
+
+class EditSftpFile(DirectoryPaneCommand):
+    def is_visible(self):
+        return False
+
+    def __call__(self, url=None):
+        if not url:
+            url = self.pane.get_file_under_cursor()
+        if url and exists(url) and not is_dir(url):
+            with NamedTemporaryFile(delete=True) as tmp_file:
+                local_file_url = 'file://' + tmp_file.name
+                submit_task(SftpCopyFileTask(url, local_file_url))
+                
+                self.pane.run_command('open_with_editor', args={'url': local_file_url})
+                
+                choice = show_alert('Would you like to upload edited file?', buttons=YES | NO, default_button=YES)
+                if choice == YES:
+                    submit_task(SftpCopyFileTask(local_file_url, url))
+
+
+class EditFtpFile(DirectoryPaneCommand):
+    def is_visible(self):
+        return False
+
+    def __call__(self, url=None):
+        if not url:
+            url = self.pane.get_file_under_cursor()
+        if url and exists(url) and not is_dir(url):
+            with NamedTemporaryFile(delete=True) as tmp_file:
+                local_file_url = 'file://' + tmp_file.name
+                submit_task(FtpCopyFileTask(url, local_file_url))
+                
+                self.pane.run_command('open_with_editor', args={'url': local_file_url})
+                
+                choice = show_alert('Would you like to upload edited file?', buttons=YES | NO, default_button=YES)
+                if choice == YES:
+                    submit_task(FtpCopyFileTask(local_file_url, url))
 
 
 class OpenNetwork(DirectoryPaneCommand):
@@ -82,6 +126,7 @@ class CloseNetwork(ApplicationCommand):
 class NetworkListener(DirectoryPaneListener):
     def on_command(self, command_name, args):
         # show_alert('command '+ command_name)
+        # show_alert('args '+ json.dumps(args))
         if command_name == 'open_directory':
             url = args.get('url', self.pane.get_path())
             if url == url_join(Config.network_scheme, 'ftp') :
@@ -108,3 +153,14 @@ class NetworkListener(DirectoryPaneListener):
                 new_args = dict(args)
                 new_args['url'] = 'file://' + Config.ftp_file
                 return 'open_with_editor', new_args
+        if command_name == 'open_with_editor':
+            url = args.get('url', self.pane.get_path())
+            if url.startswith(Config.sftp_scheme):
+                new_args = dict(args)
+                new_args['url'] = self.pane.get_file_under_cursor()
+                return 'edit_sftp_file', new_args
+            if url.startswith(Config.ftp_scheme):
+                new_args = dict(args)
+                new_args['url'] = self.pane.get_file_under_cursor()
+                return 'edit_ftp_file', new_args
+                        

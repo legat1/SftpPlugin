@@ -1,3 +1,4 @@
 from .columns import Group, Owner, Permissions
-from .commands import OpenSftp, OpenFtp, OpenNetwork, CloseNetwork, NetworkListener
-from .filesystems import SftpFileSystem, FtpFileSystem, NetworkFileSystem
+from .commands import (CloseNetwork, EditFtpFile, EditSftpFile,
+                       NetworkListener, OpenFtp, OpenNetwork, OpenSftp)
+from .filesystems import FtpFileSystem, NetworkFileSystem, SftpFileSystem

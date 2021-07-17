@@ -1,5 +1,5 @@
 from fman import Task, submit_task, fs, show_status_message, show_alert
-from fman.fs import FileSystem, cached, notify_file_added
+from fman.fs import FileSystem, cached, notify_file_added, notify_file_changed, touch
 from fman.url import basename as url_basename, join as url_join, splitscheme
 
 from datetime import datetime
@@ -134,7 +134,7 @@ class SftpFileSystem(FileSystem):
             for fname in files_to_copy:
                 yield from self._prepare_copy(url_join(src_url, fname), url_join(dst_url, fname))
         else:
-            yield _SftpCopyFileTask(src_url, dst_url)
+            yield SftpCopyFileTask(src_url, dst_url)
 
     def prepare_move(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
@@ -226,7 +226,7 @@ class SftpFileSystem(FileSystem):
         self.cache.put(path, 'get_group', group)
 
 
-class _SftpCopyFileTask(Task):
+class SftpCopyFileTask(Task):
     def __init__(self, src_url, dst_url):
         super().__init__('Copying ' + url_basename(src_url))
         self._src_url = src_url
@@ -234,7 +234,10 @@ class _SftpCopyFileTask(Task):
         self._set_size(src_url)
 
     def __call__(self):
-        self._copy(self._src_url, self._dst_url)
+        if self.get_size() > 0:
+            self._copy(self._src_url, self._dst_url)
+        else:
+            touch(self._dst_url)
 
     def _set_size(self, src_url):
         _, src_path = splitscheme(src_url)
@@ -254,20 +257,22 @@ class _SftpCopyFileTask(Task):
         if is_sftp(src_url) and is_file(dst_url):
             with SftpWrapper(src_url) as sftp:
                 sftp.conn.get(sftp.path, dst_path, callback=self._callback)
-            notify_file_added(dst_url)    
         elif is_file(src_url) and is_sftp(dst_url):
             with SftpWrapper(dst_url) as sftp:
                 sftp.conn.put(src_path, sftp.path, callback=self._callback)
             SftpCache.put(dst_path, 'is_dir', False)
-            notify_file_added(dst_url)
         elif is_sftp(src_url) and is_sftp(dst_url):
             with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
                 with src_sftp.conn.open(src_sftp.path) as src_file:
                     dst_sftp.conn.putfo(src_file, dst_sftp.path, callback=self._callback) 
             SftpCache.put(dst_path, 'is_dir', False)
-            notify_file_added(dst_url)  
         else:
             raise UnsupportedOperation
+
+        try:
+            notify_file_added(dst_url)
+        except:
+            notify_file_changed(dst_url)
 
     def _callback(self, size, file_size):
         self.set_progress(size)
@@ -388,7 +393,7 @@ class FtpFileSystem(FileSystem):
             for fname in files_to_copy:
                 yield from self._prepare_copy(url_join(src_url, fname), url_join(dst_url, fname))
         else:
-            yield _FtpCopyFileTask(src_url, dst_url)
+            yield FtpCopyFileTask(src_url, dst_url)
 
     def prepare_move(self, src_url, dst_url):
         _, dst_path = splitscheme(dst_url)
@@ -472,7 +477,7 @@ class FtpFileSystem(FileSystem):
         self.cache.put(path, 'get_permissions', permissions)
 
 
-class _FtpCopyFileTask(Task):
+class FtpCopyFileTask(Task):
     def __init__(self, src_url, dst_url):
         super().__init__('Copying ' + url_basename(src_url))
         self._src_url = src_url
@@ -481,7 +486,10 @@ class _FtpCopyFileTask(Task):
         self._set_size(src_url)
 
     def __call__(self):
-        self._copy(self._src_url, self._dst_url)
+        if self.get_size() > 0:
+            self._copy(self._src_url, self._dst_url)
+        else:
+            touch(self._dst_url)
 
     def _set_size(self, src_url):
         _, src_path = splitscheme(src_url)
@@ -504,20 +512,22 @@ class _FtpCopyFileTask(Task):
                     dst_file.write(data)
                     self._callback(data)
                 ftp.conn.retrbinary('RETR ' + ftp.path, callback)
-            notify_file_added(dst_url)
         elif is_file(src_url) and is_ftp(dst_url):
             with FtpWrapper(FtpConfig.get_host_url(dst_url)) as ftp, open(src_path, 'rb') as src_file:
                 ftp.conn.storbinary('STOR ' + ftp.path, src_file, callback=self._callback)
             FtpCache.put(dst_path, 'is_dir', False)
-            notify_file_added(dst_url)
         elif is_ftp(src_url) and is_ftp(dst_url):
             with FtpWrapper(FtpConfig.get_host_url(src_url)) as src_ftp, FtpWrapper(FtpConfig.get_host_url(dst_url)) as dst_ftp, NamedTemporaryFile(delete=True) as tmp_file:
                 src_ftp.conn.retrbinary('RETR ' + src_ftp.path, tmp_file.write)
                 dst_ftp.conn.storbinary('STOR ' + dst_ftp.path, tmp_file, callback=self._callback)
             FtpCache.put(dst_path, 'is_dir', False)
-            notify_file_added(dst_url)  
         else:
             raise UnsupportedOperation
+
+        try:
+            notify_file_added(dst_url)
+        except:
+            notify_file_changed(dst_url)
 
     def _callback(self, data):
         self._size_written += len(data)
