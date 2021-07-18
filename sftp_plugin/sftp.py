@@ -91,19 +91,34 @@ class SftpWrapper():
         client = paramiko.SSHClient()
         client.load_system_host_keys()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
         try:
             proxy = paramiko.ProxyCommand(host['proxycommand'])
         except:
             proxy = None
+        if 'user' in host:
+            user = host['user']
+        else:
+            user, ok = show_prompt('Please enter username')
+            if not ok or not user:
+                raise ValueError
         if 'identityfile' in host:
-            key = host['identityfile'][0]
-            password = None
+            key = host['identityfile']
         else:
             key = None
+        password = None
+
+        try:
+            client.connect(hostname=host['hostname'], username=user, password=password, key_filename=key, sock=proxy)
+        except:
             password, ok = show_prompt('Please enter password')
             if not ok or not password:
                 raise ValueError
-        client.connect(hostname=host['hostname'], username=host['user'], password=password, key_filename=key, sock=proxy)
+            try:
+                client.connect(hostname=host['hostname'], username=user, password=password, key_filename=key, sock=proxy)
+            except:
+                raise ValueError
+        
         return client.open_sftp()
 
     def _close_connection(self):
