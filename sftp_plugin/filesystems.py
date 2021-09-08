@@ -9,8 +9,8 @@ from os.path import basename as path_basename, join as path_join, getsize
 import stat
 from tempfile import NamedTemporaryFile
 
-from .sftp import SftpConfig, SftpWrapper
-from .ftp import FtpConfig, FtpWrapper
+from .sftp import SftpConfig, SftpWrapper, SftpBackgroundWrapper
+from .ftp import FtpConfig, FtpWrapper, FtpBackgroundWrapper
 from .config import Config, is_file, is_sftp, is_ftp
 from .cache import SftpCache, FtpCache
 
@@ -71,7 +71,7 @@ class SftpFileSystem(FileSystem):
                     for file_attributes in sftp.conn.listdir_attr(sftp.path):
                         self.save_stats(path_join(path, file_attributes.filename), file_attributes)
                         yield file_attributes.filename
-        except:
+        except Exception:
             raise FileNotFoundError
 
     def exists(self, path):
@@ -211,11 +211,11 @@ class SftpFileSystem(FileSystem):
         st_mode = stat.filemode(file_attributes.st_mode)
         try:
             owner = file_attributes.longname.split()[2]
-        except:
+        except Exception:
             owner = file_attributes.st_uid
         try:
             group = file_attributes.longname.split()[3]
-        except:
+        except Exception:
             group = file_attributes.st_gid
 
         SftpCache.put(path, 'is_dir', is_dir)
@@ -255,14 +255,17 @@ class SftpCopyFileTask(Task):
         _, dst_path = splitscheme(dst_url)
             
         if is_sftp(src_url) and is_file(dst_url):
-            with SftpWrapper(src_url) as sftp:
+            with SftpBackgroundWrapper(src_url) as sftp:
                 sftp.conn.get(sftp.path, dst_path, callback=self._callback)
         elif is_file(src_url) and is_sftp(dst_url):
-            with SftpWrapper(dst_url) as sftp:
-                sftp.conn.put(src_path, sftp.path, callback=self._callback)
+            with SftpBackgroundWrapper(dst_url) as sftp:
+                try:
+                    sftp.conn.put(src_path, sftp.path, callback=self._callback)
+                except (IOError, OSError):
+                    self.show_alert("Connection error")
             SftpCache.put(dst_path, 'is_dir', False)
         elif is_sftp(src_url) and is_sftp(dst_url):
-            with SftpWrapper(src_url) as src_sftp, SftpWrapper(dst_url) as dst_sftp:
+            with SftpBackgroundWrapper(src_url) as src_sftp, SftpBackgroundWrapper(dst_url) as dst_sftp:
                 with src_sftp.conn.open(src_sftp.path) as src_file:
                     dst_sftp.conn.putfo(src_file, dst_sftp.path, callback=self._callback) 
             SftpCache.put(dst_path, 'is_dir', False)
@@ -271,11 +274,12 @@ class SftpCopyFileTask(Task):
 
         try:
             notify_file_added(dst_url)
-        except:
+        except Exception:
             notify_file_changed(dst_url)
 
     def _callback(self, size, file_size):
         self.set_progress(size)
+        self.check_canceled()
 
 
 class FtpFileSystem(FileSystem):
@@ -320,7 +324,7 @@ class FtpFileSystem(FileSystem):
                             continue
                         self._save_stats(path_join(path, name), file_attributes)
                         yield name
-        except:
+        except Exception:
             raise FileNotFoundError
 
     def exists(self, path):
@@ -360,7 +364,7 @@ class FtpFileSystem(FileSystem):
                     FtpConfig.add_host(ftp.host, self.scheme + path)
                     self.notify_file_added(ftp.host)
                     show_status_message('Server added.')
-            except:
+            except Exception:
                 show_status_message('Server connection error.')
                 show_alert('URL should be [user[:password]@]ftp.host[:port][/path/to/dir]')
 
@@ -507,17 +511,17 @@ class FtpCopyFileTask(Task):
         _, dst_path = splitscheme(dst_url)
             
         if is_ftp(src_url) and is_file(dst_url):
-            with FtpWrapper(FtpConfig.get_host_url(src_url)) as ftp, open(dst_path, 'wb') as dst_file:
+            with FtpBackgroundWrapper(FtpConfig.get_host_url(src_url)) as ftp, open(dst_path, 'wb') as dst_file:
                 def callback(data):
                     dst_file.write(data)
                     self._callback(data)
                 ftp.conn.retrbinary('RETR ' + ftp.path, callback)
         elif is_file(src_url) and is_ftp(dst_url):
-            with FtpWrapper(FtpConfig.get_host_url(dst_url)) as ftp, open(src_path, 'rb') as src_file:
+            with FtpBackgroundWrapper(FtpConfig.get_host_url(dst_url)) as ftp, open(src_path, 'rb') as src_file:
                 ftp.conn.storbinary('STOR ' + ftp.path, src_file, callback=self._callback)
             FtpCache.put(dst_path, 'is_dir', False)
         elif is_ftp(src_url) and is_ftp(dst_url):
-            with FtpWrapper(FtpConfig.get_host_url(src_url)) as src_ftp, FtpWrapper(FtpConfig.get_host_url(dst_url)) as dst_ftp, NamedTemporaryFile(delete=True) as tmp_file:
+            with FtpBackgroundWrapper(FtpConfig.get_host_url(src_url)) as src_ftp, FtpBackgroundWrapper(FtpConfig.get_host_url(dst_url)) as dst_ftp, NamedTemporaryFile(delete=True) as tmp_file:
                 src_ftp.conn.retrbinary('RETR ' + src_ftp.path, tmp_file.write)
                 dst_ftp.conn.storbinary('STOR ' + dst_ftp.path, tmp_file, callback=self._callback)
             FtpCache.put(dst_path, 'is_dir', False)
@@ -526,12 +530,13 @@ class FtpCopyFileTask(Task):
 
         try:
             notify_file_added(dst_url)
-        except:
+        except Exception:
             notify_file_changed(dst_url)
 
     def _callback(self, data):
         self._size_written += len(data)
         self.set_progress(self._size_written)
+        self.check_canceled()
 
 
 class NetworkFileSystem(FileSystem):

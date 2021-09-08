@@ -71,14 +71,14 @@ class FtpWrapper():
             return self
         show_status_message('Connecting to %s...' % (self.host,))
         try:
-            FtpWrapper._connections[self.host] = self._connection()
+            FtpWrapper._connections[self.host] = FtpWrapper.connection(self._url)
             show_status_message('Ready.')
-        except EOFError as e:
+        except EOFError:
             show_status_message('Connection error.')
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):
-        return
+        pass
 
     @property
     def conn(self):
@@ -104,7 +104,7 @@ class FtpWrapper():
             return
         try:
             FtpWrapper._connections[host].quit()
-        except:
+        except Exception:
             pass
         finally:
             del FtpWrapper._connections[host]
@@ -116,14 +116,11 @@ class FtpWrapper():
         self.conn.retrlines(cmd, files.append)
         return ftpparser.FTPParser().parse(files)
 
-    def _connection(self):
-        ftp = FTP(host=self.host, user=self._url.username, passwd=self._url.password)
-        # ftp.cwd(self.path)
+    @staticmethod
+    def connection(url):
+        ftp = FTP(host=url.hostname, user=url.username, passwd=url.password)
         ftp.encoding = 'utf-8'
         return ftp
-
-    def _close_connection(self):
-        FtpWrapper.close_connection(self.host)
 
     def _is_connected(self):
         if self.host not in FtpWrapper._connections:
@@ -131,6 +128,48 @@ class FtpWrapper():
         try:
             FtpWrapper._connections[self.host].voidcmd('TYPE I')
             return True
-        except:
+        except Exception:
             return False
 
+class FtpBackgroundWrapper():
+    def __init__(self, url):
+        self._url = urlparse(url)
+        self._background_connection = None
+
+    def __enter__(self):
+        if self._is_connected():
+            return self
+        try:
+            self._background_connection = FtpWrapper.connection(self._url)
+        except EOFError:
+            pass
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        try:
+            self._background_connection.quit()
+        except Exception:
+            pass
+
+    @property
+    def conn(self):
+        if not self._is_connected():
+            raise Exception('Not connected')
+        return self._background_connection
+
+    @property
+    def host(self):
+        return self._url.hostname
+
+    @property
+    def path(self):
+        return self._url.path
+
+    def _is_connected(self):
+        if not self._background_connection:
+            return False
+        try:
+            self._background_connection.voidcmd('TYPE I')
+            return True
+        except Exception:
+            return False
