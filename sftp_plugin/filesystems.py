@@ -13,7 +13,6 @@ from fman.fs import (FileSystem, cached, notify_file_added,
 from fman.url import basename as url_basename
 from fman.url import join as url_join
 from fman.url import splitscheme
-from paramiko.sftp import SFTPError
 
 from .cache import FtpCache, SftpCache
 from .config import Config, is_file, is_ftp, is_sftp
@@ -269,7 +268,7 @@ class SftpCopyFileTask(Task):
             with SftpBackgroundWrapper(dst_url) as sftp:
                 try:
                     sftp.conn.put(src_path, sftp.path, callback=self._callback)
-                except (IOError, OSError, SFTPError):
+                except (IOError, OSError, paramiko.sftp.SFTPError):
                     self.show_alert("Connection error")
             SftpCache.put(dst_path, 'is_dir', False)
         elif is_sftp(src_url) and is_sftp(dst_url):
