@@ -1,3 +1,6 @@
+import json
+import platform
+from subprocess import call
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlparse
 
@@ -163,4 +166,49 @@ class NetworkListener(DirectoryPaneListener):
                 new_args = dict(args)
                 new_args['url'] = self.pane.get_file_under_cursor()
                 return 'edit_ftp_file', new_args
-                        
+        if command_name == 'open_terminal':
+            url = args.get('url', self.pane.get_path())
+            if url.startswith(Config.sftp_scheme):
+                new_args = dict(args)
+                new_args['url'] = url
+                return 'open_ssh_terminal', new_args
+
+
+class OpenSshTerminal(DirectoryPaneCommand):
+    def is_visible(self):
+        return False
+
+    def __call__(self, url=None):
+        if not url:
+            url = self.pane.get_path()
+        self._open_terminal(url)
+
+    def _open_terminal(self, url):
+        scheme, path = splitscheme(url)
+        if scheme != Config.sftp_scheme:
+            show_alert('No such path supported.')
+            return
+        ssh_path = url_join('ssh://', path)
+        system = platform.system()
+        if system == 'Windows':
+            commands = (['wt'], ['cmd', '/c start cmd'])
+        elif system == 'Darwin':
+            commands = (['open', '-a', 'iterm'], ['open', '-a', 'terminal'])
+        elif system == 'Linux':
+            commands = (['gnome-terminal'], ['xfce4-terminal'], ['konsole'], ['x-terminal-emulator'])
+        else:
+            show_alert('Unknown platform.')
+            return
+        self._start_first_existed(
+            map(lambda command: command + [ssh_path], commands)
+        )
+
+    def _start_first_existed(self, commands):
+        for command in commands:
+            try:
+                res = call(command)
+                if res == 0:
+                    return
+            except FileNotFoundError:
+                pass
+        show_alert('No terminal found.')
